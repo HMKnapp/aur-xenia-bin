@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '25 5 * * *'
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    if: "!contains(github.event.head_commit.message, '[auto]: ')"
+
+    steps:
+    - name: Checkout Main Repo
+      uses: actions/checkout@v2
+      with:
+        token: ${{ secrets.PAT }}
+
+    - name: Install Dependencies
+      run: |
+        wget http://mirrors.kernel.org/ubuntu/pool/universe/v/vulkan/libvulkan1_${LIBVULKAN_VERSION}+dfsg1-1_amd64.deb http://mirrors.kernel.org/ubuntu/pool/universe/v/vulkan/libvulkan-dev_${LIBVULKAN_VERSION}+dfsg1-1_amd64.deb
+        sudo apt install -y libarchive-dev bsdtar zstd upx-ucl liblz4-dev libx11-dev libiberty-dev libunwind-dev clang-9 clang-format-9 llvm-9-dev g++-8 python3 libc++-dev libc++abi-dev libgtk-3-dev libpthread-stubs0-dev libsdl2-dev
+        sudo dpkg -i libvulkan1_${LIBVULKAN_VERSION}+dfsg1-1_amd64.deb libvulkan-dev_${LIBVULKAN_VERSION}+dfsg1-1_amd64.deb
+        sudo ln -s $(which bash) /usr/bin/bash
+      env:
+        LIBVULKAN_VERSION: 1.1.70
+
+    - name: Install Pacman
+      run: |
+        curl -sL https://archlinux.org/packages/core/x86_64/pacman/download | sudo tar -I zstd -C / -xf -
+
+    - name: Clone Xenia Repositories
+      id: clone
+      run: |
+        git clone https://github.com/bwrsandman/xenia xenia
+        cd xenia
+        git submodule set-url -- third_party/premake-androidmk https://github.com/Meoo/premake-androidmk
+        git submodule init
+        git submodule update --checkout
+        printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)" > /tmp/rev
+        echo "::set-output name=revision::$(cat /tmp/rev)"
+
+    - name: Compare GitHub and AUR PKGBUILD
+      id: compare
+      run: |
+        curl -sL https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=xenia-bin > /tmp/PKGBUILD.aur
+        diff /tmp/PKGBUILD.aur PKGBUILD
+        [[ -n $(diff a b) ]]
+      continue-on-error: true
+
+    - name: Build Xenia
+      id: build
+      run: |
+        cd xenia && ./xenia-build build --config=${CONFIG}
+      env:
+        CXX: clang++-9
+        CC: clang-9
+        AR: llvm-ar-9
+        CONFIG: Release
+      if: steps.compare.outcome == 'success'
+
+    - name: Compress Binaries
+      id: compress
+      run: |
+        mkdir -p usr/bin usr/lib
+        # for static_lib in $(find xenia/build/ -type f -name '*.a'); do mv ${static_lib} usr/lib/; done
+        for executable in $(find xenia/build/ -type f -executable  -name 'xenia'); do upx --lzma --best -o usr/bin/$(basename ${executable}) ${executable}; chmod +x usr/bin/$(basename ${executable});done
+        mkdir artifact
+        cp -r usr artifact/
+      if: steps.build.outcome == 'success'
+
+    - name: Pack Archive
+      id: pack
+      run: |
+        REV=${{ steps.clone.outputs.revision }}
+        XZ_OPT="-9e -T 4" tar --owner=0 --group=0 -cJvf xenia.${REV}.tar.xz usr
+        echo "::set-output name=sha256sum::$(sha256sum xenia.${REV}.tar.xz | cut -d ' ' -f1)"
+      if: steps.compress.outcome == 'success'
+
+    - name: Upload Artifact
+      id: upload_artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: xenia.${{ steps.clone.outputs.revision }}
+        path: artifact
+      if: steps.pack.outcome == 'success'
+
+    - name: Update GitHub Repo
+      id: update
+      run: |
+        git checkout ${GITHUB_HEAD_REF:-${GITHUB_REF##*/}}
+        PKGREL=$(sed -n "s/^pkgrel=\([0-9]\+\)/\1/p" PKGBUILD)
+        PKGREL=$((${PKGREL} + 1))
+        sed -i "s/^pkgrel=\([0-9]\+\)/pkgrel=${PKGREL}/" PKGBUILD
+        sed -i "s/^pkgver=\(.*\)/pkgver=${{ steps.clone.outputs.revision }}/" PKGBUILD
+        sed -i "s/^sha256sums=('.*')/sha256sums=('${{ steps.pack.outputs.sha256sum }}')/" PKGBUILD
+        sed -i "s,^source=('.*'),source=('"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"/releases/download/${{ steps.clone.outputs.revision }}/xenia.${{ steps.clone.outputs.revision }}.tar.xz')," PKGBUILD
+        git add PKGBUILD
+        CNAME="$(git log -1 --pretty=format:%aN | cat)"
+        CEMAIL="$(git log -1 --pretty=format:%aE | cat)"
+        git config --global user.email "${CEMAIL}"
+        git config --global user.name "${CNAME}"
+        git -c user.name="${CNAME}" -c user.email="${CEMAIL}" commit -m "[auto]: update to rev ${{ steps.clone.outputs.revision }}"
+        git push
+        git push --delete origin ${{ steps.clone.outputs.revision }} >&/dev/null || true
+        git tag -a ${{ steps.clone.outputs.revision }} -m "Update to rev ${{ steps.clone.outputs.revision }}"
+        git push --tags
+      env:
+        AUR_CO_PATH: /tmp/aur-xenia-bin
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      if: |
+        steps.upload_artifact.outcome == 'success' && 
+        github.ref == 'refs/heads/master'
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.clone.outputs.revision }}
+        release_name: ${{ steps.clone.outputs.revision }}
+        draft: false
+        prerelease: false
+      if: steps.update.outcome == 'success'
+
+    - name: Upload Release Package
+      id: upload_release_asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./xenia.${{ steps.clone.outputs.revision }}.tar.xz
+        asset_name: xenia.${{ steps.clone.outputs.revision }}.tar.xz
+        asset_content_type: application/x-xz
+      if: steps.create_release.outcome == 'success'
+
+    - name: Update AUR
+      id: aur
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -t rsa,dsa,ecdsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+        echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
+        chmod 600 ~/.ssh/aur
+        ssh-keygen -y -f ~/.ssh/aur > ~/.ssh/aur.pub
+        echo >> ~/.ssh/config
+        echo 'Host aur.archlinux.org' >> ~/.ssh/config
+        echo '  IdentityFile ~/.ssh/aur' >> ~/.ssh/config
+        echo '  User aur' >> ~/.ssh/config
+        mkdir -p ${AUR_CO_PATH} && cd $_
+        git clone git+ssh://aur@aur.archlinux.org/xenia-bin.git .
+        \cp ${GITHUB_WORKSPACE}/PKGBUILD .
+        git status
+        makepkg --printsrcinfo > .SRCINFO
+        git add PKGBUILD .SRCINFO
+        git config user.name hmk
+        git config user.email hmk@user.local
+        git commit -m "Update to rev ${{ steps.clone.outputs.revision }}"
+        cat PKGBUILD
+        cat .SRCINFO
+        git push
+      env:
+        AUR_CO_PATH: /tmp/aur-xenia-bin
+        SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        XZ_SHA256SUM: ${{ steps.pack.sha256sum }}
+        XZ_URL: ${{ steps.create_release.outputs.upload_url }}
+      if: steps.upload_release_asset.outcome == 'success'
+
+    - name: Add PKGBUILD to Release
+      id: upload_release_pkgbuild
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./PKGBUILD
+        asset_name: PKGBUILD
+        asset_content_type: text/plain
+      if: steps.aur.outcome == 'success'

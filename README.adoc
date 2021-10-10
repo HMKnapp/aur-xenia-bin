@@ -1,0 +1,28 @@
+= Xenia
+
+NOTE: This GitHub Actions workflow builds Xenia and publishes a `PKGBUILD` to the AUR.
+
+Xenia is an experimental emulator for the Xbox 360.
+
+https://xenia.jp
+
+== Automated workflow
+
+- Compiles and creates binary release
+- Updates AUR package
+
+== Why?
+
+Xenia takes a long time to compile and requires a lot of resources to build.
+
+Providing the latest version as binary... 
+
+.Saves
+- time
+- energy
+- storage
+- bandwidth
+
+.Reduces
+- waste
+- redundancy
