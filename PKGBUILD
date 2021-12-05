@@ -1,6 +1,6 @@
 pkgname=xenia-bin
 pkgver=r6144.130888dbf
-pkgrel=1
+pkgrel=2
 pkgdesc='Xenia is an experimental emulator for the Xbox 360. Compiled binary from latest commit.'
 arch=('x86_64')
 url='https://xenia.jp'
@@ -10,7 +10,7 @@ depends=('gtk3' 'lz4' 'glew' 'libx11')
 provides=('xenia')
 conflicts=('xenia')
 source=('https://github.com/HMKnapp/xenia-bin/releases/download/r6144.130888dbf/xenia.r6144.130888dbf.tar.xz')
-sha256sums=('cdd463a94b536fec4f5b7b053e3555884b34e11e099f098c352c82d9b2143174')
+sha256sums=('d0dbcd04760ae93d702f137345de7e48a5e15703d37455490c422c2781759177')
 
   # this PKGBUILD package is automatically created
   #
