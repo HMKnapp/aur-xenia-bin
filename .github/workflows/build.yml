@@ -44,7 +44,12 @@ jobs:
       id: compare
       run: |
         curl -sL https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=xenia-bin > /tmp/PKGBUILD.aur
-        diff /tmp/PKGBUILD.aur PKGBUILD
+        PKGVER=$(sed -n "s/^pkgver=\(.\+\)/\1/p" PKGBUILD)
+        if [[ ${PKGVER} -ne '${{ steps.clone.outputs.revision }}' ]]; then 
+        sed -i "s/^pkgrel=\([0-9]\+\)/pkgrel=0/" PKGBUILD
+        sed -i "s/^pkgver=\(.*\)/pkgver=${{ steps.clone.outputs.revision }}/" PKGBUILD
+        fi
+        diff --color /tmp/PKGBUILD.aur PKGBUILD
         [[ -n $(diff /tmp/PKGBUILD.aur PKGBUILD > /dev/null) ]]
       continue-on-error: true
 
@@ -92,7 +97,6 @@ jobs:
         PKGREL=$(sed -n "s/^pkgrel=\([0-9]\+\)/\1/p" PKGBUILD)
         PKGREL=$((${PKGREL} + 1))
         sed -i "s/^pkgrel=\([0-9]\+\)/pkgrel=${PKGREL}/" PKGBUILD
-        sed -i "s/^pkgver=\(.*\)/pkgver=${{ steps.clone.outputs.revision }}/" PKGBUILD
         sed -i "s/^sha256sums=('.*')/sha256sums=('${{ steps.pack.outputs.sha256sum }}')/" PKGBUILD
         sed -i "s,^source=('.*'),source=('"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"/releases/download/${{ steps.clone.outputs.revision }}/xenia.${{ steps.clone.outputs.revision }}.tar.xz')," PKGBUILD
         git add PKGBUILD
