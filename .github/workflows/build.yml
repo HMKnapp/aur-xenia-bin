@@ -45,7 +45,7 @@ jobs:
       run: |
         curl -sL https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=xenia-bin > /tmp/PKGBUILD.aur
         diff /tmp/PKGBUILD.aur PKGBUILD
-        [[ -n $(diff a b) ]]
+        [[ -n $(diff /tmp/PKGBUILD.aur PKGBUILD > /dev/null) ]]
       continue-on-error: true
 
     - name: Build Xenia
